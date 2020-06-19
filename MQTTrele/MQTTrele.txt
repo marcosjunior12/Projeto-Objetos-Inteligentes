@@ -1,16 +1,18 @@
-#include <FS.h>                 
-#include <ESP8266WiFi.h>        
+#include <FS.h> 
+#include <ArduinoJson.h>
+#include <PubSubClient.h>                
+#include <ESP8266WiFi.h>   
+#include <ESP8266WebServer.h>     
 #include <DNSServer.h>
-#include <ESP8266WebServer.h>
 #include <WiFiManager.h>        
-#include <ArduinoJson.h>       
-#include <PubSubClient.h>
 #include <EEPROM.h>
 
 #define DEBUG  
 
 
 //Aqui nós colocamos os dados da nossa instancia mqtt 
+
+
 #define servidor_mqtt             "soldier.cloudmqtt.com"  
 #define servidor_mqtt_porta       "17915"  
 #define servidor_mqtt_usuario     "kfuzhbia"  
@@ -19,17 +21,17 @@
 
 
 #define pino                      2                   
-#define memoria_alocada           4                   
+#define alocada           4                   
 
-//Criando uma instancia do wifi client
-WiFiClient espClient;                                 
-PubSubClient client(espClient);                       
+//instancia wifi client
 
-uint8_t statusAnt   =             0;                  //Variável que armazenará o status do pino que foi gravado anteriormente na EEPROM
-bool precisaSalvar  =             false;              //Flag para salvar os dados
+WiFiClient esp01cli;                                 
+PubSubClient client(esp01cli);                       
+
+bool verifSalvar  =             false;              //para salvar os dados
 
 //Função para imprimir na porta serial
-void imprimirSerial(bool linha, String mensagem){
+void printSerial(bool linha, String mensagem){
   #ifdef DEBUG
     if(linha){
       Serial.println(mensagem);
@@ -40,30 +42,30 @@ void imprimirSerial(bool linha, String mensagem){
 }
 
 //Função de retorno para notificar sobre a necessidade de salvar as configurações
-void precisaSalvarCallback() {
-  imprimirSerial(true, "As configuracoes tem que ser salvas.");
-  precisaSalvar = true;
+void verifSalvarCallback() {
+  printSerial(true, "Salvar configurações");
+  verifSalvar = true;
 }
 
 //Caso necessario, reconecta ao mqtt
-void reconectar() {
+void reconect() {
   
   while (!client.connected()) {
-    imprimirSerial(false, "Reconectando");
+    printSerial(false, "Reconectando");
     
     bool conectado = strlen(servidor_mqtt_usuario) > 0 ?
                      client.connect("ESP8266Client", servidor_mqtt_usuario, servidor_mqtt_senha) :
                      client.connect("ESP8266Client");
 
     if(conectado) {
-      imprimirSerial(true, "Conectado!");
+      printSerial(true, "Conectado!");
       
       //Subscreve para monitorar os comandos recebidos
       client.subscribe(mqtt_topico_sub, 1); 
     } else {
-      imprimirSerial(false, "Falha ");
-      imprimirSerial(true, " tentando novamente em 5 segundos");
-      //Aguarda 5 segundos para tentar novamente
+      printSerial(false, "Falha ");
+      printSerial(true, " tentando reconectar");
+      //tempo para reconectar
       delay(5000);
     }
   }
@@ -72,7 +74,7 @@ void reconectar() {
 
 //Gravar status do pino na EEPROM
 void gravarStatusPino(uint8_t statusPino){
-  EEPROM.begin(memoria_alocada);
+  EEPROM.begin(alocada);
   EEPROM.write(0, statusPino);
   EEPROM.end();
 }
@@ -84,33 +86,33 @@ void retorno(char* topico, byte* mensagem, unsigned int tamanho) {
   String strMensagem = String((char*)mensagem);
   strMensagem.toLowerCase();
   
-  imprimirSerial(false, "Mensagem recebida, Topico: ");
-  imprimirSerial(false, topico);
-  imprimirSerial(false, ". Tamanho: ");
-  imprimirSerial(false, String(tamanho).c_str());
-  imprimirSerial(false, ". Mensagem: ");
-  imprimirSerial(true, strMensagem);
+  printSerial(false, "Mensagem recebida, Topico: ");
+  printSerial(false, topico);
+  printSerial(false, ". Tamanho: ");
+  printSerial(false, String(tamanho).c_str());
+  printSerial(false, ". Mensagem: ");
+  printSerial(true, strMensagem);
 
   //Executando o comando recebido pelo broker MQTT, (Liga ou Desliga)
-  imprimirSerial(false, "Status do pino antes de processar o comando: ");
-  imprimirSerial(true, String(digitalRead(pino)).c_str());
+  printSerial(false, "Status do pino antes de processar o comando: ");
+  printSerial(true, String(digitalRead(pino)).c_str());
   
   if(strMensagem == "liga"){
-    imprimirSerial(true, "Ligando");
+    printSerial(true, "Ligando");
     digitalWrite(pino, HIGH);
     gravarStatusPino(HIGH);
   }else if(strMensagem == "desliga"){
-    imprimirSerial(true, "Desligando");
+    printSerial(true, "Desligando");
     digitalWrite(pino, LOW);
     gravarStatusPino(LOW);
   }else{
-    imprimirSerial(true, "Trocando o estado do pino...");
+    printSerial(true, "Trocando o estado do pino...");
     digitalWrite(pino, !digitalRead(pino));
     gravarStatusPino(digitalRead(pino));
   }
   
-  imprimirSerial(false, "Status do pino depois de processar o comando: ");
-  imprimirSerial(true, String(digitalRead(pino)).c_str());
+  printSerial(false, "Status do pino depois de processar o comando: ");
+  printSerial(true, String(digitalRead(pino)).c_str());
 }
 
 //função setup é executada apenas quando o dispositivo é ligado
@@ -118,21 +120,21 @@ void setup() {
   #ifdef DEBUG
     Serial.begin(115200);
   #endif
-  imprimirSerial(true, "...");
+  printSerial(true, "...");
 
   //declarando o pino como saida
   pinMode(pino, OUTPUT);
 
   //Iniciando o SPIFSS (SPI Flash File System)
-  imprimirSerial(true, "Iniciando o SPIFSS (SPI Flash File System)");
+  printSerial(true, "Iniciando o SPIFSS (SPI Flash File System)");
   if (SPIFFS.begin()) {
-    imprimirSerial(true, "Sistema de arquivos SPIFSS montado!");
+    printSerial(true, "Sistema de arquivos SPIFSS montado!");
     if (SPIFFS.exists("/config.json")) {
       //Arquivo de configuração existe e será lido.
-      imprimirSerial(true, "Abrindo o arquivo de configuracao...");
+      printSerial(true, "Abrindo o arquivo de configuracao...");
       File configFile = SPIFFS.open("/config.json", "r");
       if (configFile) {
-        imprimirSerial(true, "Arquivo de configuracao aberto.");
+        printSerial(true, "Arquivo de configuracao aberto.");
         size_t size = configFile.size();
         
         //Alocando um buffer para armazenar o conteúdo do arquivo.
@@ -145,7 +147,7 @@ void setup() {
         if (json.success()) {
           
             //Copiando as variáveis salvas previamente no aquivo json para a memória do ESP.
-            imprimirSerial(true, "arquivo json analisado.");
+            printSerial(true, "arquivo json analisado.");
             strcpy(servidor_mqtt, json["servidor_mqtt"]);
             strcpy(servidor_mqtt_porta, json["servidor_mqtt_porta"]);
             strcpy(servidor_mqtt_usuario, json["servidor_mqtt_usuario"]);
@@ -153,12 +155,12 @@ void setup() {
             strcpy(mqtt_topico_sub, json["mqtt_topico_sub"]);
 
         } else {
-          imprimirSerial(true, "Falha ao ler as configuracoes do arquivo json.");
+          printSerial(true, "Falha ao ler as configuracoes do arquivo json.");
         }
       }
     }
   } else {
-    imprimirSerial(true, "Falha ao montar o sistema de arquivos SPIFSS.");
+    printSerial(true, "Falha ao montar o sistema de arquivos SPIFSS.");
   }
 
   //Parâmetros extras para configuração
@@ -170,11 +172,11 @@ void setup() {
   WiFiManagerParameter custom_mqtt_pass("pass", "Senha", servidor_mqtt_senha, 20);
   WiFiManagerParameter custom_mqtt_topic_sub("topic_sub", "Topico para subscrever", mqtt_topico_sub, 30);
 
-  //Inicialização do WiFiManager. Uma vez iniciado não é necessário mantê-lo em memória.
+  //Inicialização do WiFiManager
   WiFiManager wifiManager;
 
   //Definindo a função que informará a necessidade de salvar as configurações
-  wifiManager.setSaveConfigCallback(precisaSalvarCallback);
+  wifiManager.setSaveConfigCallback(verifSalvarCallback);
   
   //Adicionando os parâmetros para conectar ao servidor MQTT
   wifiManager.addParameter(&custom_mqtt_server);
@@ -188,7 +190,7 @@ void setup() {
   //cria um access point com o nome "AutoConnectAP" e a senha "senha123"
   //E entra em loop aguardando a configuração de uma rede WiFi válida.
   if (!wifiManager.autoConnect("AutoConnectAP", "senha123")) {
-    imprimirSerial(true, "Falha ao conectar. Excedeu o tempo limite para conexao.");
+    printSerial(true, "Falha ao conectar. Excedeu o tempo limite para conexao.");
     delay(3000);
     //Reinicia o ESP e tenta novamente
     ESP.reset();
@@ -196,7 +198,7 @@ void setup() {
   }
 
   //Conectou com sucesso no wifi
-  imprimirSerial(true, "Conectado!! :)");
+  printSerial(true, "Conectado!! :)");
 
   //Lendo os parâmetros atualizados
   strcpy(servidor_mqtt, custom_mqtt_server.getValue());
@@ -206,8 +208,8 @@ void setup() {
   strcpy(mqtt_topico_sub, custom_mqtt_topic_sub.getValue());
 
   //Salvando os parâmetros informados na tela web do WiFiManager
-  if (precisaSalvar) {
-    imprimirSerial(true, "Salvando as configuracoes");
+  if (verifSalvar) {
+    printSerial(true, "Salvando as configuracoes");
     DynamicJsonBuffer jsonBuffer;
     JsonObject& json = jsonBuffer.createObject();
     json["servidor_mqtt"] = servidor_mqtt;
@@ -218,7 +220,7 @@ void setup() {
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
-      imprimirSerial(true, "Houve uma falha ao abrir o arquivo de configuracao para incluir/alterar as configuracoes.");
+      printSerial(true, "Houve uma falha ao abrir o arquivo de configuracao para incluir/alterar as configuracoes.");
     }
 
     json.printTo(Serial);
@@ -226,8 +228,8 @@ void setup() {
     configFile.close();
   }
 
-  imprimirSerial(false, "IP: ");
-  imprimirSerial(true, WiFi.localIP().toString());
+  printSerial(false, "IP: ");
+  printSerial(true, WiFi.localIP().toString());
 
   //Informando ao client do PubSub a url do servidor e a porta.
   int portaInt = atoi(servidor_mqtt_porta);
@@ -239,7 +241,7 @@ void setup() {
 //Função de repetição
 void loop() {
   if (!client.connected()) {
-    reconectar();
+    reconect();
   }
   client.loop();
 }
